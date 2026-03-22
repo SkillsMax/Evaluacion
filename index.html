@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Evaluación de Empleados</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <h1>Módulo de Evaluación</h1>
+    <hr>
+
+    <div class="table-responsive" id="listaEmpleados">
+        <h2>Seleccione a quién evaluar</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Nombre</th>
+                    <th>Puesto</th>
+                    <th>Estado</th>
+                    <th>Acciones</th>
+                </tr>
+            </thead>
+            <tbody id="tablaPendientes"></tbody>
+        </table>
+    </div>
+
+    <div id="evaluacion" class="table-responsive oculto">
+        <h2 id="tituloEmpleado" style="color:#d35400;"></h2>
+        <div class="controles">
+            <button onclick="agregarItem('habilidades')">+ Habilidad</button>
+            <button onclick="agregarItem('conocimientos')">+ Conocimiento</button>
+            <button onclick="agregarItem('antropometria')">+ Antropometría</button>
+            <button onclick="cancelarEvaluacion()" class="btn-eliminar">Cancelar</button>
+        </div>
+        <table class="matriz">
+            <thead>
+                <tr>
+                    <th>Concepto a Evaluar</th>
+                    <th>0</th><th>1</th><th>2</th><th>3</th><th>4</th>
+                </tr>
+            </thead>
+            <tbody id="tablaMatriz">
+                <tr class="seccion" id="sec-habilidades"><td colspan="6">HABILIDADES</td></tr>
+                <tr class="seccion" id="sec-conocimientos"><td colspan="6">CONOCIMIENTOS</td></tr>
+                <tr class="seccion" id="sec-antropometria"><td colspan="6">MEDIDAS ANTROPOMÉTRICAS</td></tr>
+            </tbody>
+        </table>
+        <button class="btn-guardar" onclick="guardarEvaluacion()">Guardar Evaluación en la Nube</button>
+    </div>
+
+    <div class="table-responsive">
+        <h2>Resultados Finales</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Nombre</th>
+                    <th>Puesto</th>
+                    <th>Puntaje</th>
+                    <th>%</th>
+                    <th>Resultado</th>
+                    <th>Reporte Excel</th>
+                </tr>
+            </thead>
+            <tbody id="tablaResultados"></tbody>
+        </table>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js";
+        import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-database.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyCNokOSiV483vppPmDwtWs0nH1evzZwbjU",
+            authDomain: "matriz-de-habilidades-c4bd5.firebaseapp.com",
+            databaseURL: "https://matriz-de-habilidades-c4bd5-default-rtdb.firebaseio.com",
+            projectId: "matriz-de-habilidades-c4bd5"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+        const dbRef = ref(db, 'matriz_habilidades');
+        const PIN_ACCESO = "1432";
+
+        let empleados = [];
+        let criteriosPorPuesto = {};
+        let empleadoActual = null;
+
+        onValue(dbRef, (snapshot) => {
+            const data = snapshot.val();
+            empleados = data?.empleados || [];
+            criteriosPorPuesto = data?.criterios || {};
+            renderizarTablas();
+        });
+
+        const sincronizar = () => set(dbRef, { empleados, criterios: criteriosPorPuesto });
+
+        function renderizarTablas() {
+            // Tabla superior: Para elegir a quién evaluar
+            document.getElementById("tablaPendientes").innerHTML = empleados.map((e, i) => `
+                <tr>
+                    <td>${e.nombre}</td>
+                    <td>${e.puesto}</td>
+                    <td>${e.evaluacion ? '✅ Evaluado' : '⏳ Pendiente'}</td>
+                    <td>
+                        <button onclick="iniciarEvaluacion(${i})">${e.evaluacion ? 'Re-evaluar' : 'Evaluar'}</button>
+                    </td>
+                </tr>
+            `).join('');
+
+            // Tabla inferior: Resultados con botón Excel individual
+            document.getElementById("tablaResultados").innerHTML = empleados.filter(e => e.evaluacion).map((e, i) => {
+                let realIndex = empleados.indexOf(e); // Para encontrar su ID en el arreglo original
+                return `
+                <tr class="${e.evaluacion.resultado === 'Apto' ? 'apto' : 'no-apto'}">
+                    <td>${e.nombre}</td>
+                    <td>${e.puesto}</td>
+                    <td>${e.evaluacion.total}</td>
+                    <td>${e.evaluacion.porcentaje}%</td>
+                    <td>${e.evaluacion.resultado}</td>
+                    <td><button class="btn-excel" onclick="exportarExcelIndividual(${realIndex})">📊 Descargar Excel</button></td>
+                </tr>
+            `}).join('');
+        }
+
+        window.iniciarEvaluacion = (index) => {
+            let pass = prompt("🔒 Ingrese PIN de Evaluador:");
+            if (pass !== PIN_ACCESO) return alert("PIN Incorrecto");
+
+            empleadoActual = index;
+            let emp = empleados[index];
+            document.getElementById("tituloEmpleado").innerText = `Evaluando a: ${emp.nombre} - Puesto: ${emp.puesto}`;
+            
+            if (!criteriosPorPuesto[emp.puesto]) {
+                criteriosPorPuesto[emp.puesto] = { habilidades: [], conocimientos: [], antropometria: [] };
+            }
+
+            document.getElementById("evaluacion").classList.remove("oculto");
+            document.getElementById("listaEmpleados").classList.add("oculto");
+            renderizarMatriz(emp.puesto);
+        };
+
+        window.cancelarEvaluacion = () => {
+            document.getElementById("evaluacion").classList.add("oculto");
+            document.getElementById("listaEmpleados").classList.remove("oculto");
+            empleadoActual = null;
+        };
+
+        window.agregarItem = (tipo) => {
+            let puesto = empleados[empleadoActual].puesto;
+            let texto = prompt(`Nuevo concepto de ${tipo.toUpperCase()} para el puesto ${puesto}:`);
+            if (texto) {
+                if (!criteriosPorPuesto[puesto][tipo]) criteriosPorPuesto[puesto][tipo] = [];
+                criteriosPorPuesto[puesto][tipo].push(texto);
+                sincronizar(); // Se guarda el criterio en la base de datos
+                renderizarMatriz(puesto);
+            }
+        };
+
+        function renderizarMatriz(puesto) {
+            document.querySelectorAll(".item-criterio").forEach(el => el.remove());
+            const emp = empleados[empleadoActual];
+            const render = (tipo, id) => {
+                let root = document.getElementById(id);
+                (criteriosPorPuesto[puesto][tipo] || []).forEach((texto, i) => {
+                    let fila = document.createElement("tr");
+                    fila.className = "item-criterio";
+                    let key = `radio_${tipo}_${i}`;
+                    // Buscar si ya tenía una respuesta previa (para re-evaluar)
+                    let valor = emp.detalleEvaluacion ? emp.detalleEvaluacion.find(d => d.concepto === texto)?.valor : null;
+                    
+                    fila.innerHTML = `<td style="text-align:left">${texto}</td>` + 
+                        [0,1,2,3,4].map(v => `<td><input type="radio" name="${key}" value="${v}" ${valor == v ? 'checked' : ''}></td>`).join('');
+                    root.insertAdjacentElement("afterend", fila);
+                    root = fila;
+                });
+            };
+            render("habilidades", "sec-habilidades");
+            render("conocimientos", "sec-conocimientos");
+            render("antropometria", "sec-antropometria");
+        }
+
+        window.guardarEvaluacion = () => {
+            let emp = empleados[empleadoActual];
+            let criterios = criteriosPorPuesto[emp.puesto];
+            let total = 0, n = 0;
+            let detalles = []; // Aquí guardaremos qué concepto se evaluó y con cuánto
+
+            ['habilidades', 'conocimientos', 'antropometria'].forEach(t => {
+                criterios[t].forEach((text, i) => {
+                    let radio = document.querySelector(`input[name="radio_${t}_${i}"]:checked`);
+                    if (radio) {
+                        let v = parseInt(radio.value);
+                        total += v;
+                        n++;
+                        // Guardamos el detalle específico para el reporte Excel
+                        detalles.push({ concepto: text, valor: v, categoria: t.toUpperCase() });
+                    }
+                });
+            });
+
+            if (n === 0) return alert("No hay respuestas marcadas para evaluar.");
+            
+            let porc = (total / (n * 4)) * 100;
+            emp.evaluacion = { total, porcentaje: porc.toFixed(2), resultado: porc >= 70 ? "Apto" : "No apto" };
+            emp.detalleEvaluacion = detalles; 
+            emp.fecha = new Date().toLocaleString();
+            
+            sincronizar();
+            alert("⭐⭐ Evaluación Guardada Correctamente");
+            cancelarEvaluacion(); // Vuelve a la vista principal
+        };
+
+        // EXPORTACIÓN A EXCEL POR EMPLEADO
+        window.exportarExcelIndividual = (index) => {
+            let emp = empleados[index];
+            if (!emp || !emp.evaluacion) return alert("Empleado no evaluado.");
+
+            // BOM para que Excel detecte acentos en CSV
+            let csv = "\ufeff"; 
+            csv += "REPORTE DE EVALUACION DE PERSONAL\n\n";
+            csv += `Nombre Empleado:,${emp.nombre}\n`;
+            csv += `Puesto:,${emp.puesto}\n`;
+            csv += `Cuadrilla:,${emp.cuadrilla}\n`;
+            csv += `Fecha Evaluacion:,${emp.fecha}\n\n`;
+            
+            csv += `PUNTAJE OBTENIDO:,${emp.evaluacion.total}\n`;
+            csv += `PORCENTAJE:,${emp.evaluacion.porcentaje}%\n`;
+            csv += `RESULTADO FINAL:,${emp.evaluacion.resultado}\n\n`;
+
+            csv += "CATEGORIA,CONCEPTO EVALUADO,PUNTUACION\n";
+            if (emp.detalleEvaluacion) {
+                emp.detalleEvaluacion.forEach(item => {
+                    csv += `"${item.categoria}","${item.concepto}",${item.valor}\n`;
+                });
+            }
+
+            let blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            let enlace = document.createElement("a");
+            enlace.href = URL.createObjectURL(blob);
+            enlace.download = `Evaluacion_${emp.nombre.replace(/\s+/g, '_')}.csv`;
+            enlace.click();
+        };
+    </script>
+</body>
+</html>
