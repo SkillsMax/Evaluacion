@@ -1,0 +1,62 @@
+body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    margin: 20px;
+    background: #f0f2f5;
+    color: #333;
+}
+
+h1, h2 { text-align: center; color: #007BFF; }
+
+/* Formularios */
+.grid-form {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+form input {
+    padding: 10px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+}
+
+/* Botones */
+button {
+    padding: 10px 15px;
+    cursor: pointer;
+    border: none;
+    border-radius: 5px;
+    background-color: #007BFF;
+    color: white;
+    transition: 0.3s;
+    margin: 2px;
+}
+
+button:hover { opacity: 0.8; }
+.btn-principal { width: 100%; font-weight: bold; }
+.btn-eliminar { background-color: #dc3545; }
+.btn-guardar { background-color: #28a745; width: 100%; margin-top: 20px; font-size: 1.1rem; }
+.btn-excel { background-color: #17a2b8; }
+
+/* Tablas */
+.table-responsive {
+    overflow-x: auto;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    margin-bottom: 30px;
+    padding: 10px;
+}
+
+table { width: 100%; border-collapse: collapse; min-width: 600px; margin-top: 10px; }
+th, td { border: 1px solid #eee; padding: 12px; text-align: center; }
+th { background-color: #f8f9fa; }
+.seccion td { background-color: #e9ecef; font-weight: bold; text-align: left; }
+
+.apto { background-color: #d4edda; color: #155724; }
+.no-apto { background-color: #f8d7da; color: #721c24; }
+
+.buscador { width: 100%; box-sizing: border-box; padding: 12px; margin: 10px 0; border: 2px solid #007BFF; border-radius: 5px; }
+.oculto { display: none !important; }
+.controles { display: flex; gap: 10px; justify-content: center; margin-bottom: 15px; }
