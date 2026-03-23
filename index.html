@@ -56,14 +56,22 @@
                 <tr>
                     <th>Nombre</th>
                     <th>Puesto</th>
-                    <th>Puntaje</th>
-                    <th>%</th>
+                    <th>Puntaje Total</th>
+                    <th>% Aplica</th>
                     <th>Resultado</th>
-                    <th>Reporte Excel</th>
+                    <th>Acciones</th>
                 </tr>
             </thead>
             <tbody id="tablaResultados"></tbody>
         </table>
+    </div>
+
+    <div id="modalEvaluacion" class="modal oculto">
+        <div class="modal-contenido">
+            <span class="cerrar" onclick="cerrarModal()">&times;</span>
+            <h2 id="modalNombre">Detalles de la Evaluación</h2>
+            <div id="modalDetalles"></div>
+        </div>
     </div>
 
     <script type="module">
@@ -96,7 +104,6 @@
         const sincronizar = () => set(dbRef, { empleados, criterios: criteriosPorPuesto });
 
         function renderizarTablas() {
-            // Tabla superior: Para elegir a quién evaluar
             document.getElementById("tablaPendientes").innerHTML = empleados.map((e, i) => `
                 <tr>
                     <td>${e.nombre}</td>
@@ -104,24 +111,34 @@
                     <td>${e.evaluacion ? '✅ Evaluado' : '⏳ Pendiente'}</td>
                     <td>
                         <button onclick="iniciarEvaluacion(${i})">${e.evaluacion ? 'Re-evaluar' : 'Evaluar'}</button>
+                        <button class="btn-eliminar" onclick="eliminarEmpleado(${i})">🗑️ Eliminar</button>
                     </td>
                 </tr>
             `).join('');
 
-            // Tabla inferior: Resultados con botón Excel individual
             document.getElementById("tablaResultados").innerHTML = empleados.filter(e => e.evaluacion).map((e, i) => {
-                let realIndex = empleados.indexOf(e); // Para encontrar su ID en el arreglo original
+                let realIndex = empleados.indexOf(e);
                 return `
                 <tr class="${e.evaluacion.resultado === 'Apto' ? 'apto' : 'no-apto'}">
                     <td>${e.nombre}</td>
                     <td>${e.puesto}</td>
-                    <td>${e.evaluacion.total}</td>
-                    <td>${e.evaluacion.porcentaje}%</td>
+                    <td>${e.evaluacion.totalSuma}</td>
+                    <td>${e.evaluacion.porcentajeAplica}%</td>
                     <td>${e.evaluacion.resultado}</td>
-                    <td><button class="btn-excel" onclick="exportarExcelIndividual(${realIndex})">📊 Descargar Excel</button></td>
+                    <td>
+                        <button onclick="verEvaluacion(${realIndex})">👁️ Ver Detalles</button>
+                        <button class="btn-excel" onclick="exportarExcelIndividual(${realIndex})">📊 Excel</button>
+                    </td>
                 </tr>
             `}).join('');
         }
+
+        window.eliminarEmpleado = (index) => {
+            if(confirm("¿Estás seguro de que deseas eliminar a este empleado del sistema?")) {
+                empleados.splice(index, 1);
+                sincronizar();
+            }
+        };
 
         window.iniciarEvaluacion = (index) => {
             let pass = prompt("🔒 Ingrese PIN de Evaluador:");
@@ -152,7 +169,16 @@
             if (texto) {
                 if (!criteriosPorPuesto[puesto][tipo]) criteriosPorPuesto[puesto][tipo] = [];
                 criteriosPorPuesto[puesto][tipo].push(texto);
-                sincronizar(); // Se guarda el criterio en la base de datos
+                sincronizar();
+                renderizarMatriz(puesto);
+            }
+        };
+
+        window.eliminarItem = (tipo, index) => {
+            if(confirm("¿Estás seguro de que deseas eliminar este concepto de la evaluación?")) {
+                let puesto = empleados[empleadoActual].puesto;
+                criteriosPorPuesto[puesto][tipo].splice(index, 1);
+                sincronizar();
                 renderizarMatriz(puesto);
             }
         };
@@ -166,10 +192,13 @@
                     let fila = document.createElement("tr");
                     fila.className = "item-criterio";
                     let key = `radio_${tipo}_${i}`;
-                    // Buscar si ya tenía una respuesta previa (para re-evaluar)
                     let valor = emp.detalleEvaluacion ? emp.detalleEvaluacion.find(d => d.concepto === texto)?.valor : null;
                     
-                    fila.innerHTML = `<td style="text-align:left">${texto}</td>` + 
+                    fila.innerHTML = `
+                        <td style="text-align:left; display:flex; justify-content:space-between; align-items:center;">
+                            ${texto} 
+                            <button class="btn-eliminar-small" onclick="eliminarItem('${tipo}', ${i})" title="Eliminar concepto">X</button>
+                        </td>` + 
                         [0,1,2,3,4].map(v => `<td><input type="radio" name="${key}" value="${v}" ${valor == v ? 'checked' : ''}></td>`).join('');
                     root.insertAdjacentElement("afterend", fila);
                     root = fila;
@@ -183,32 +212,97 @@
         window.guardarEvaluacion = () => {
             let emp = empleados[empleadoActual];
             let criterios = criteriosPorPuesto[emp.puesto];
-            let total = 0, n = 0;
-            let detalles = []; // Aquí guardaremos qué concepto se evaluó y con cuánto
+            
+            let datos = {
+                habilidades: { sum: 0, n: 0 },
+                conocimientos: { sum: 0, n: 0 },
+                antropometria: { sum: 0, n: 0 }
+            };
+            let detalles = [];
 
             ['habilidades', 'conocimientos', 'antropometria'].forEach(t => {
-                criterios[t].forEach((text, i) => {
+                (criterios[t] || []).forEach((text, i) => {
                     let radio = document.querySelector(`input[name="radio_${t}_${i}"]:checked`);
                     if (radio) {
                         let v = parseInt(radio.value);
-                        total += v;
-                        n++;
-                        // Guardamos el detalle específico para el reporte Excel
+                        datos[t].sum += v;
+                        datos[t].n++;
                         detalles.push({ concepto: text, valor: v, categoria: t.toUpperCase() });
                     }
                 });
             });
 
-            if (n === 0) return alert("No hay respuestas marcadas para evaluar.");
-            
-            let porc = (total / (n * 4)) * 100;
-            emp.evaluacion = { total, porcentaje: porc.toFixed(2), resultado: porc >= 70 ? "Apto" : "No apto" };
+            let catsEvaluadas = (datos.habilidades.n > 0 ? 1 : 0) + (datos.conocimientos.n > 0 ? 1 : 0) + (datos.antropometria.n > 0 ? 1 : 0);
+            if (catsEvaluadas === 0) return alert("No hay respuestas marcadas para evaluar.");
+
+            // Suma total de los puntos sacados
+            let totalSuma = datos.habilidades.sum + datos.conocimientos.sum + datos.antropometria.sum;
+
+            // Porcentajes por categoría = (Suma Cat * 100) / (Cant * 4 max)
+            let pctHab = datos.habilidades.n > 0 ? (datos.habilidades.sum * 100) / (datos.habilidades.n * 4) : 0;
+            let pctCon = datos.conocimientos.n > 0 ? (datos.conocimientos.sum * 100) / (datos.conocimientos.n * 4) : 0;
+            let pctAnt = datos.antropometria.n > 0 ? (datos.antropometria.sum * 100) / (datos.antropometria.n * 4) : 0;
+
+            // Sumatoria de los porcentajes sacados dividida entre 100 (y promediado entre las categorías evaluadas)
+            let sumaPorcentajes = pctHab + pctCon + pctAnt; 
+            let factorDecimalAplica = sumaPorcentajes / (catsEvaluadas * 100); // Esto da un número entre 0 y 1
+            let factorDecimalNoAplica = 1 - factorDecimalAplica; // Restamos 1 menos el factor de Aplica
+
+            let porcentajeAplicaFinal = (factorDecimalAplica * 100).toFixed(2);
+            let porcentajeNoAplicaFinal = (factorDecimalNoAplica * 100).toFixed(2);
+
+            emp.evaluacion = { 
+                totalSuma, 
+                pctHab: pctHab.toFixed(2), 
+                pctCon: pctCon.toFixed(2), 
+                pctAnt: pctAnt.toFixed(2),
+                porcentajeAplica: porcentajeAplicaFinal,
+                porcentajeNoAplica: porcentajeNoAplicaFinal,
+                resultado: porcentajeAplicaFinal >= 70 ? "Apto" : "No apto" 
+            };
             emp.detalleEvaluacion = detalles; 
             emp.fecha = new Date().toLocaleString();
             
             sincronizar();
             alert("⭐⭐ Evaluación Guardada Correctamente");
-            cancelarEvaluacion(); // Vuelve a la vista principal
+            cancelarEvaluacion();
+        };
+
+        // VENTANA PARA VER DETALLES DE EVALUACIÓN
+        window.verEvaluacion = (index) => {
+            let emp = empleados[index];
+            document.getElementById("modalNombre").innerText = `Resultados de: ${emp.nombre} (${emp.puesto})`;
+            
+            let htmlDetalles = `
+                <div style="display:flex; justify-content:space-around; background:#f4f4f4; padding:10px; border-radius:5px; margin-bottom:15px; text-align:center;">
+                    <div><b>% Habilidades</b><br>${emp.evaluacion.pctHab}%</div>
+                    <div><b>% Conocimientos</b><br>${emp.evaluacion.pctCon}%</div>
+                    <div><b>% Antropometría</b><br>${emp.evaluacion.pctAnt}%</div>
+                </div>
+                <div style="text-align:center; font-size:18px; margin-bottom:15px;">
+                    <p><b>Aplica (Factor / Promedio):</b> ${emp.evaluacion.porcentajeAplica}%</p>
+                    <p><b>No Aplica (1 - Factor Aplica):</b> ${emp.evaluacion.porcentajeNoAplica}%</p>
+                    <p><b>Puntos Totales Obtenidos:</b> ${emp.evaluacion.totalSuma}</p>
+                </div>
+                <table>
+                    <thead><tr><th>Categoría</th><th>Concepto Evaluado</th><th>Calificación</th></tr></thead>
+                    <tbody>
+                        ${emp.detalleEvaluacion.map(d => `
+                            <tr>
+                                <td>${d.categoria}</td>
+                                <td style="text-align:left;">${d.concepto}</td>
+                                <td><b>${d.valor} / 4</b></td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+            document.getElementById("modalDetalles").innerHTML = htmlDetalles;
+            document.getElementById("modalEvaluacion").classList.remove("oculto");
+        };
+
+        window.cerrarModal = () => {
+            document.getElementById("modalEvaluacion").classList.add("oculto");
         };
 
         // EXPORTACIÓN A EXCEL POR EMPLEADO
@@ -216,16 +310,19 @@
             let emp = empleados[index];
             if (!emp || !emp.evaluacion) return alert("Empleado no evaluado.");
 
-            // BOM para que Excel detecte acentos en CSV
             let csv = "\ufeff"; 
             csv += "REPORTE DE EVALUACION DE PERSONAL\n\n";
             csv += `Nombre Empleado:,${emp.nombre}\n`;
             csv += `Puesto:,${emp.puesto}\n`;
-            csv += `Cuadrilla:,${emp.cuadrilla}\n`;
+            csv += `Cuadrilla:,${emp.cuadrilla || 'N/A'}\n`;
             csv += `Fecha Evaluacion:,${emp.fecha}\n\n`;
             
-            csv += `PUNTAJE OBTENIDO:,${emp.evaluacion.total}\n`;
-            csv += `PORCENTAJE:,${emp.evaluacion.porcentaje}%\n`;
+            csv += `PUNTOS TOTALES:,${emp.evaluacion.totalSuma}\n`;
+            csv += `PORCENTAJE HABILIDADES:,${emp.evaluacion.pctHab}%\n`;
+            csv += `PORCENTAJE CONOCIMIENTOS:,${emp.evaluacion.pctCon}%\n`;
+            csv += `PORCENTAJE ANTROPOMETRIA:,${emp.evaluacion.pctAnt}%\n`;
+            csv += `PORCENTAJE APLICA FINAL:,${emp.evaluacion.porcentajeAplica}%\n`;
+            csv += `PORCENTAJE NO APLICA:,${emp.evaluacion.porcentajeNoAplica}%\n`;
             csv += `RESULTADO FINAL:,${emp.evaluacion.resultado}\n\n`;
 
             csv += "CATEGORIA,CONCEPTO EVALUADO,PUNTUACION\n";
