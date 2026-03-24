@@ -10,6 +10,10 @@
     <h1>Módulo de Evaluación</h1>
     <hr>
 
+    <div style="max-width: 600px; margin: 0 auto 20px auto;">
+        <input type="text" id="buscadorPrincipal" class="buscador" placeholder="🔍 Buscar por nombre o puesto..." onkeyup="renderizarTablas()">
+    </div>
+
     <div class="table-responsive" id="listaEmpleados">
         <h2>Seleccione a quién evaluar</h2>
         <table>
@@ -26,7 +30,9 @@
     </div>
 
     <div id="evaluacion" class="table-responsive oculto">
-        <h2 id="tituloEmpleado" style="color:#d35400;"></h2>
+        
+        <div class="tarjeta-info" id="panelInfoEmpleado"></div>
+
         <div class="controles">
             <button onclick="agregarItem('habilidades')">+ Habilidad</button>
             <button onclick="agregarItem('conocimientos')">+ Conocimiento</button>
@@ -74,6 +80,16 @@
         </div>
     </div>
 
+    <div id="modalEdicion" class="modal oculto">
+        <div class="modal-contenido" style="max-width: 500px;">
+            <span class="cerrar" onclick="cerrarModalEdicion()">&times;</span>
+            <h2 style="color:#007BFF;">Editar Datos del Empleado</h2>
+            <div id="formularioEdicion" style="margin-top: 15px;">
+                </div>
+            <button class="btn-guardar" onclick="guardarEdicion()">Guardar Cambios</button>
+        </div>
+    </div>
+
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js";
         import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/11.0.1/firebase-database.js";
@@ -93,31 +109,38 @@
         let empleados = [];
         let criteriosPorPuesto = {};
         let empleadoActual = null;
+        let empleadoAEditar = null;
 
         onValue(dbRef, (snapshot) => {
             const data = snapshot.val();
             empleados = data?.empleados || [];
             criteriosPorPuesto = data?.criterios || {};
-            renderizarTablas();
+            window.renderizarTablas(); 
         });
 
         const sincronizar = () => set(dbRef, { empleados, criterios: criteriosPorPuesto });
 
-        function renderizarTablas() {
-            document.getElementById("tablaPendientes").innerHTML = empleados.map((e, i) => `
+        window.renderizarTablas = () => {
+            let terminoBusqueda = document.getElementById("buscadorPrincipal") ? document.getElementById("buscadorPrincipal").value.toLowerCase() : "";
+
+            let empleadosFiltrados = empleados.map((emp, index) => ({...emp, originalIndex: index}))
+                .filter(e => e.nombre.toLowerCase().includes(terminoBusqueda) || e.puesto.toLowerCase().includes(terminoBusqueda));
+
+            // Se agregó el botón de Editar en Acciones
+            document.getElementById("tablaPendientes").innerHTML = empleadosFiltrados.map((e) => `
                 <tr>
                     <td>${e.nombre}</td>
                     <td>${e.puesto}</td>
                     <td>${e.evaluacion ? '✅ Evaluado' : '⏳ Pendiente'}</td>
                     <td>
-                        <button onclick="iniciarEvaluacion(${i})">${e.evaluacion ? 'Re-evaluar' : 'Evaluar'}</button>
-                        <button class="btn-eliminar" onclick="eliminarEmpleado(${i})">🗑️ Eliminar</button>
+                        <button onclick="iniciarEvaluacion(${e.originalIndex})">${e.evaluacion ? 'Re-evaluar' : 'Evaluar'}</button>
+                        <button class="btn-editar" onclick="editarEmpleado(${e.originalIndex})">✏️ Editar</button>
+                        <button class="btn-eliminar" onclick="eliminarEmpleado(${e.originalIndex})">🗑️ Eliminar</button>
                     </td>
                 </tr>
             `).join('');
 
-            document.getElementById("tablaResultados").innerHTML = empleados.filter(e => e.evaluacion).map((e, i) => {
-                let realIndex = empleados.indexOf(e);
+            document.getElementById("tablaResultados").innerHTML = empleadosFiltrados.filter(e => e.evaluacion).map((e) => {
                 return `
                 <tr class="${e.evaluacion.resultado === 'Apto' ? 'apto' : 'no-apto'}">
                     <td>${e.nombre}</td>
@@ -126,15 +149,69 @@
                     <td>${e.evaluacion.porcentajeAplica}%</td>
                     <td>${e.evaluacion.resultado}</td>
                     <td>
-                        <button onclick="verEvaluacion(${realIndex})">👁️ Ver Detalles</button>
-                        <button class="btn-excel" onclick="exportarExcelIndividual(${realIndex})">📊 Excel</button>
+                        <button onclick="verEvaluacion(${e.originalIndex})">👁️ Ver Detalles</button>
+                        <button class="btn-excel" onclick="exportarExcelIndividual(${e.originalIndex})">📊 Excel</button>
                     </td>
                 </tr>
             `}).join('');
-        }
+        };
+
+        // ====== FUNCIONES DE EDICIÓN DE EMPLEADO ======
+        window.editarEmpleado = (index) => {
+            let pass = prompt("🔒 Ingrese PIN de Administrador/Evaluador:");
+            if (pass !== PIN_ACCESO) return alert("PIN Incorrecto");
+
+            empleadoAEditar = index;
+            let emp = empleados[index];
+            let htmlForm = '<div class="grid-form">';
+
+            // Generar un input por cada dato del empleado (excepto los datos internos de sistema)
+            for (const [clave, valor] of Object.entries(emp)) {
+                if (clave !== 'evaluacion' && clave !== 'detalleEvaluacion' && clave !== 'fecha') {
+                    let titulo = clave.charAt(0).toUpperCase() + clave.slice(1);
+                    htmlForm += `
+                        <div style="display:flex; flex-direction:column; margin-bottom:10px; text-align:left;">
+                            <label style="font-weight:bold; margin-bottom:5px; color:#333;">${titulo}</label>
+                            <input type="text" id="edit_input_${clave}" value="${valor || ''}">
+                        </div>
+                    `;
+                }
+            }
+            htmlForm += '</div>';
+            document.getElementById("formularioEdicion").innerHTML = htmlForm;
+            document.getElementById("modalEdicion").classList.remove("oculto");
+        };
+
+        window.guardarEdicion = () => {
+            if (empleadoAEditar === null) return;
+            let emp = empleados[empleadoAEditar];
+
+            // Recuperar los nuevos valores de los inputs
+            for (const clave of Object.keys(emp)) {
+                if (clave !== 'evaluacion' && clave !== 'detalleEvaluacion' && clave !== 'fecha') {
+                    let inputEl = document.getElementById(`edit_input_${clave}`);
+                    if (inputEl) {
+                        emp[clave] = inputEl.value.trim();
+                    }
+                }
+            }
+
+            sincronizar();
+            alert("✅ Datos del empleado actualizados correctamente.");
+            cerrarModalEdicion();
+        };
+
+        window.cerrarModalEdicion = () => {
+            document.getElementById("modalEdicion").classList.add("oculto");
+            empleadoAEditar = null;
+        };
+        // ===============================================
 
         window.eliminarEmpleado = (index) => {
-            if(confirm("¿Estás seguro de que deseas eliminar a este empleado del sistema?")) {
+            let pass = prompt("🔒 Ingrese PIN para autorizar eliminación:");
+            if (pass !== PIN_ACCESO) return alert("PIN Incorrecto");
+
+            if(confirm("¿Estás seguro de que deseas eliminar a este empleado del sistema permanentemente?")) {
                 empleados.splice(index, 1);
                 sincronizar();
             }
@@ -146,7 +223,18 @@
 
             empleadoActual = index;
             let emp = empleados[index];
-            document.getElementById("tituloEmpleado").innerText = `Evaluando a: ${emp.nombre} - Puesto: ${emp.puesto}`;
+            
+            let infoHtml = `<h2 style="color:#d35400; margin-bottom: 10px; border-bottom: 1px solid #ddd; padding-bottom: 5px;">Evaluando a: ${emp.nombre}</h2>`;
+            infoHtml += `<div class="grid-info-empleado">`;
+            
+            for (const [clave, valor] of Object.entries(emp)) {
+                if (clave !== 'evaluacion' && clave !== 'detalleEvaluacion' && clave !== 'fecha') {
+                    let titulo = clave.charAt(0).toUpperCase() + clave.slice(1);
+                    infoHtml += `<p><strong>${titulo}:</strong> ${valor || 'N/A'}</p>`;
+                }
+            }
+            infoHtml += `</div>`;
+            document.getElementById("panelInfoEmpleado").innerHTML = infoHtml;
             
             if (!criteriosPorPuesto[emp.puesto]) {
                 criteriosPorPuesto[emp.puesto] = { habilidades: [], conocimientos: [], antropometria: [] };
@@ -154,12 +242,14 @@
 
             document.getElementById("evaluacion").classList.remove("oculto");
             document.getElementById("listaEmpleados").classList.add("oculto");
+            document.getElementById("buscadorPrincipal").classList.add("oculto");
             renderizarMatriz(emp.puesto);
         };
 
         window.cancelarEvaluacion = () => {
             document.getElementById("evaluacion").classList.add("oculto");
             document.getElementById("listaEmpleados").classList.remove("oculto");
+            document.getElementById("buscadorPrincipal").classList.remove("oculto");
             empleadoActual = null;
         };
 
@@ -235,18 +325,15 @@
             let catsEvaluadas = (datos.habilidades.n > 0 ? 1 : 0) + (datos.conocimientos.n > 0 ? 1 : 0) + (datos.antropometria.n > 0 ? 1 : 0);
             if (catsEvaluadas === 0) return alert("No hay respuestas marcadas para evaluar.");
 
-            // Suma total de los puntos sacados
             let totalSuma = datos.habilidades.sum + datos.conocimientos.sum + datos.antropometria.sum;
 
-            // Porcentajes por categoría = (Suma Cat * 100) / (Cant * 4 max)
             let pctHab = datos.habilidades.n > 0 ? (datos.habilidades.sum * 100) / (datos.habilidades.n * 4) : 0;
             let pctCon = datos.conocimientos.n > 0 ? (datos.conocimientos.sum * 100) / (datos.conocimientos.n * 4) : 0;
             let pctAnt = datos.antropometria.n > 0 ? (datos.antropometria.sum * 100) / (datos.antropometria.n * 4) : 0;
 
-            // Sumatoria de los porcentajes sacados dividida entre 100 (y promediado entre las categorías evaluadas)
             let sumaPorcentajes = pctHab + pctCon + pctAnt; 
-            let factorDecimalAplica = sumaPorcentajes / (catsEvaluadas * 100); // Esto da un número entre 0 y 1
-            let factorDecimalNoAplica = 1 - factorDecimalAplica; // Restamos 1 menos el factor de Aplica
+            let factorDecimalAplica = sumaPorcentajes / (catsEvaluadas * 100); 
+            let factorDecimalNoAplica = 1 - factorDecimalAplica; 
 
             let porcentajeAplicaFinal = (factorDecimalAplica * 100).toFixed(2);
             let porcentajeNoAplicaFinal = (factorDecimalNoAplica * 100).toFixed(2);
@@ -268,7 +355,6 @@
             cancelarEvaluacion();
         };
 
-        // VENTANA PARA VER DETALLES DE EVALUACIÓN
         window.verEvaluacion = (index) => {
             let emp = empleados[index];
             document.getElementById("modalNombre").innerText = `Resultados de: ${emp.nombre} (${emp.puesto})`;
@@ -305,16 +391,19 @@
             document.getElementById("modalEvaluacion").classList.add("oculto");
         };
 
-        // EXPORTACIÓN A EXCEL POR EMPLEADO
         window.exportarExcelIndividual = (index) => {
             let emp = empleados[index];
             if (!emp || !emp.evaluacion) return alert("Empleado no evaluado.");
 
             let csv = "\ufeff"; 
             csv += "REPORTE DE EVALUACION DE PERSONAL\n\n";
-            csv += `Nombre Empleado:,${emp.nombre}\n`;
-            csv += `Puesto:,${emp.puesto}\n`;
-            csv += `Cuadrilla:,${emp.cuadrilla || 'N/A'}\n`;
+            
+            for (const [clave, valor] of Object.entries(emp)) {
+                if (clave !== 'evaluacion' && clave !== 'detalleEvaluacion' && clave !== 'fecha') {
+                    let titulo = clave.charAt(0).toUpperCase() + clave.slice(1);
+                    csv += `${titulo}:,${valor || 'N/A'}\n`;
+                }
+            }
             csv += `Fecha Evaluacion:,${emp.fecha}\n\n`;
             
             csv += `PUNTOS TOTALES:,${emp.evaluacion.totalSuma}\n`;
